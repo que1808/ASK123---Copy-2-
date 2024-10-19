@@ -1,0 +1,375 @@
+import tkinter as tk
+from tkinter import messagebox, ttk
+import random
+import os
+import sys
+import json
+from PIL import Image, ImageTk
+import logging
+import unittest
+import time
+
+
+def resource_path(relative_path):
+    try:
+        base_path = sys._MEIPASS
+    except AttributeError:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+
+class SignGame:
+    def __init__(self, root, base_folder):
+        logging.info("Initialiserer SignGame...")
+        self.root = root
+        self.root.title("ASK123 - Tegn til tale spill")
+        self.root.geometry("1280x960")
+        self.root.configure(bg="#f0f4f8")
+
+        # Moderne farger for bedre brukeropplevelse (lys, fargerik stil)
+        self.button_bg_color = "#ff6f61"  # Lys korallfarge for knapper
+        self.label_font = ("Helvetica", 14)
+        self.correct_color = "#66bb6a"  # Lys grønn for riktig svar
+        self.wrong_color = "#ff5252"  # Lys rød for feil svar
+        self.neutral_color = "#f0f4f8"  # Nøytral, lys bakgrunn
+        self.frame_bg_color = "#ffffff"  # Hvit bakgrunn for rammer
+        self.heading_color = "#42a5f5"  # Lys blå for overskrifter
+        self.button_hover_color = "#ff8a65"  # Lys oransje for hover-effekter på knapper
+
+        self.daglig_behov_hints = {
+            "tannbørste": ["Du bruker dette hver morgen og kveld for å holde tennene rene.", "Dette er et hygieneverktøy for tennene dine.", "Det starter med 'tann'"]
+        }
+
+        self.base_folder = base_folder
+        self.category_stats = {}
+        self.total_images = {}
+        self.current_category = None
+
+        self.score = 0
+        self.streak = 0
+        self.high_score = 0
+        self.total_questions = 0
+        self.answered_questions = 0
+        self.hint_used = False
+
+        self.player_name = None
+        self.players_dir = "players"
+        os.makedirs(self.players_dir, exist_ok=True)
+
+        self.current_difficulty = "easy"
+
+        self.image_cache = {}
+        self.images_used = set()
+
+        self.max_attempts = 3
+        self.attempts = 0
+
+        self.correct_answer = ""
+        self.image_pool = []
+        
+        self.timer = None
+        self.time_limit = 15  # Set time limit for the timed mode
+
+        self.show_welcome_screen()
+
+    def clear_window(self):
+        for widget in self.root.winfo_children():
+            widget.destroy()
+
+    def create_label(self, text, font, bg, fg="#000000", pady=10, pack=True):
+        label = tk.Label(self.root, text=text, font=font, bg=bg, fg=fg)
+        if pack:
+            label.pack(pady=pady)
+        return label
+
+    def create_button(self, text, command, font, bg, height=2, width=20, pady=10, pack=True):
+        button = tk.Button(self.root, text=text, command=command, height=height, width=width, font=font, bg=bg, fg="#ffffff", activebackground=self.button_hover_color, activeforeground="#ffffff")
+        if pack:
+            button.pack(pady=pady)
+        return button
+
+    def show_welcome_screen(self):
+        self.clear_window()
+        self.create_label("Velkommen til ASK123", font=("Helvetica", 36, "bold"), bg=self.neutral_color, fg=self.heading_color)
+
+        explanation_text = (
+            "ASK (Alternativ og Supplerende Kommunikasjon) er tegn til tale som hjelper barn å kommunisere mer effektivt.\n\n"
+            "Alle barn kan dra nytte av ASK fordi det:\n"
+            "• Støtter språkutvikling\n"
+            "• Forbedrer kommunikasjonsevner\n"
+            "• Øker forståelse og uttrykksevne"
+        )
+        self.create_label(explanation_text, font=("Helvetica", 12), bg=self.neutral_color, fg="#333333", pack=True)
+
+        self.show_monthly_signs()
+
+        self.create_button("Start spillet", self.load_player_menu, font=self.label_font, bg=self.button_bg_color)
+
+    def show_monthly_signs(self):
+        monthly_signs_folder = os.path.join(self.base_folder, 'manedens_tegn')
+        images = self.load_images_for_month(monthly_signs_folder)
+
+        if images:
+            self.create_label("Månedens Tegn", font=("Helvetica", 24, "bold"), bg=self.neutral_color, fg=self.heading_color)
+            images_frame = tk.Frame(self.root, bg=self.neutral_color)
+            images_frame.pack(pady=10)
+
+            for i, image_path in enumerate(images[:4]):
+                if image_path not in self.image_cache:
+                    img = Image.open(image_path)
+                    img = img.resize((200, 200), Image.Resampling.LANCZOS)
+                    photo = ImageTk.PhotoImage(img)
+                    self.image_cache[image_path] = photo
+
+                label = tk.Label(images_frame, image=self.image_cache[image_path], bg=self.neutral_color)
+                label.grid(row=0, column=i, padx=10, pady=10)
+
+    def load_images_for_month(self, folder_path):
+        if os.path.exists(folder_path):
+            images = [os.path.join(folder_path, f) for f in os.listdir(folder_path) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+            return images[:4]
+        return []
+
+    def load_player_menu(self):
+        self.clear_window()
+        self.create_label("Velkommen! Velg eller opprett en profil:", font=("Helvetica", 20, "bold"), bg=self.neutral_color, fg=self.heading_color)
+
+        player_files = [f.replace(".json", "") for f in os.listdir(self.players_dir) if f.endswith(".json")]
+        if player_files:
+            self.create_label("Eksisterende spillere:", font=("Helvetica", 14), bg=self.neutral_color, fg="#333333")
+            for player in player_files:
+                frame = tk.Frame(self.root, bg=self.neutral_color)
+                frame.pack(pady=5)
+                self.create_button(player, lambda p=player: self.select_player(p), font=self.label_font, bg=self.button_bg_color, pack=False)
+                tk.Button(frame, text="Slett", font=self.label_font, bg=self.wrong_color, fg="#ffffff", command=lambda p=player: self.delete_player(p)).pack(side=tk.LEFT, padx=10)
+
+        self.create_label("Opprett ny spiller:", font=self.label_font, bg=self.neutral_color, fg="#333333")
+        self.new_player_entry = tk.Entry(self.root, font=self.label_font)
+        self.new_player_entry.pack(pady=10)
+        self.create_button("Opprett spiller", self.create_player, font=self.label_font, bg=self.button_bg_color)
+
+    def create_player(self):
+        player_name = self.new_player_entry.get().strip()
+        if player_name:
+            player_file = os.path.join(self.players_dir, f"{player_name}.json")
+            if os.path.exists(player_file):
+                messagebox.showerror("Feil", "Spilleren finnes allerede. Velg et annet navn.")
+            else:
+                self.player_name = player_name
+                self.save_progress()
+                self.load_categories()
+                self.load_category_stats()
+                self.show_start_menu()
+        else:
+            messagebox.showwarning("Advarsel", "Spillernavnet kan ikke være tomt. Vennligst skriv inn et navn.")
+
+    def delete_player(self, player_name):
+        response = messagebox.askyesno("Bekreftelse", f"Er du sikker på at du vil slette spilleren {player_name}?")
+        if response:
+            player_file = os.path.join(self.players_dir, f"{player_name}.json")
+            if os.path.exists(player_file):
+                os.remove(player_file)
+                logging.info(f"Player {player_name} deleted successfully.")
+                messagebox.showinfo("Slettet", f"Spilleren {player_name} er slettet.")
+                self.load_player_menu()
+            else:
+                logging.error(f"Spilleren {player_name} finnes ikke.")
+                messagebox.showerror("Feil", f"Spilleren {player_name} finnes ikke.")
+
+    def select_player(self, player_name):
+        self.player_name = player_name
+        if not self.load_progress():
+            messagebox.showerror("Feil", "Kunne ikke laste spilleren. Prøv igjen.")
+            return
+        self.load_categories()
+        self.load_category_stats()
+        self.show_start_menu()
+
+    def load_progress(self):
+        logging.info(f"Laster spillerdata for {self.player_name}...")
+        if self.player_name:
+            player_file = os.path.join(self.players_dir, f"{self.player_name}.json")
+            if os.path.exists(player_file):
+                try:
+                    with open(player_file, "r") as f:
+                        progress_data = json.load(f)
+
+                    self.category_stats = progress_data.get("category_stats", {})
+                    self.score = progress_data.get("score", 0)
+                    self.streak = progress_data.get("streak", 0)
+                    self.high_score = progress_data.get("high_score", 0)
+
+                    logging.info("Spillerdata lastet inn.")
+                    return True
+                except json.JSONDecodeError:
+                    logging.error(f"Feil under lasting av spillerdata: Filen inneholder ugyldig JSON-format.")
+                    messagebox.showerror("Feil", "Kunne ikke laste spillerdata: Ugyldig JSON-format.")
+                    return False
+        else:
+            logging.warning("Ingen spiller valgt.")
+        return False
+
+    def save_progress(self):
+        if self.player_name:
+            player_file = os.path.join(self.players_dir, f"{self.player_name}.json")
+            progress_data = {
+                "category_stats": self.category_stats,
+                "score": self.score,
+                "streak": self.streak,
+                "high_score": self.high_score
+            }
+            try:
+                with open(player_file, "w") as f:
+                    json.dump(progress_data, f)
+                logging.info(f"Progresjon lagret for spiller {self.player_name}.")
+            except Exception as e:
+                logging.error(f"Feil under lagring av progresjon: {e}")
+
+    def load_categories(self):
+        categories_path = resource_path(self.base_folder)
+        self.categories = [d for d in os.listdir(categories_path) if os.path.isdir(os.path.join(categories_path, d))]
+        self.assign_category_colors()
+
+    def assign_category_colors(self):
+        colors = ["#FFB3BA", "#BAFFC9", "#BAE1FF", "#FFFFBA", "#FFDFBA", "#E0BBE4"]
+        self.category_colors = {}
+        for i, category in enumerate(self.categories):
+            self.category_colors[category] = colors[i % len(colors)]
+
+    def load_category_stats(self):
+        for category in self.categories:
+            if category not in self.category_stats:
+                self.category_stats[category] = 0
+            category_path = os.path.join(self.base_folder, category)
+            images = [f for f in os.listdir(category_path) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+            self.total_images[category] = len(images)
+
+    def show_start_menu(self):
+        self.streak = 0
+        self.clear_window()
+
+        self.create_label(f"Velkommen, {self.player_name}!", font=("Helvetica", 20, "bold"), bg=self.neutral_color, fg=self.heading_color)
+        self.create_label("Velg en kategori:", font=("Helvetica", 16), bg=self.neutral_color, fg="#333333")
+
+        for category in self.categories:
+            self.create_category_button(category)
+
+        self.create_button("Alle kategorier", self.use_all_categories, font=("Helvetica", 14, "bold"), bg=self.button_bg_color)
+        self.create_button("Tilbakestill progresjon", self.reset_progress, font=self.label_font, bg=self.button_bg_color)
+        player_menu_button = self.create_button("Spiller meny", self.load_player_menu, font=self.label_font, bg=self.button_bg_color, pack=False)
+        player_menu_button.place(x=1100, y=850)
+
+        self.create_button("Flerspiller modus", self.multiplayer_mode, font=("Helvetica", 14, "bold"), bg=self.button_bg_color)
+
+    def create_category_button(self, category):
+        frame = tk.Frame(self.root, bg=self.neutral_color)
+        frame.pack(pady=10)
+        button = tk.Button(frame, text=category, command=lambda c=category: self.use_category(c),
+                           height=2, width=20, font=("Helvetica", 14, "bold"),
+                           bg=self.category_colors[category], fg="#000000", activebackground=self.button_hover_color)
+        button.pack(side=tk.LEFT)
+
+        correct = self.category_stats.get(category, 0)
+        total = self.total_images.get(category, 1)
+        percentage = (correct / total) * 100 if total > 0 else 0
+
+        progress_bar = ttk.Progressbar(frame, length=100, mode='determinate')
+        progress_bar['value'] = percentage
+        progress_bar.pack(side=tk.LEFT, padx=10)
+
+        percentage_label = tk.Label(frame, text=f"Du kan {percentage:.1f}% av tegnene", font=("Helvetica", 12),
+                                    bg=self.neutral_color, fg="#333333")
+        percentage_label.pack(side=tk.LEFT, padx=10)
+
+    def use_category(self, category):
+        self.current_category = category
+        self.load_images_from_folder(category)
+        self.start_quiz()
+
+    def use_all_categories(self):
+        self.current_category = "Alle kategorier"
+        all_images = []
+        self.image_to_answer = {}
+        for category in self.categories:
+            images = self.load_images_from_folder(category, add_to_pool=False)
+            all_images.extend([(img, category) for img in images])
+            for img in images:
+                self.image_to_answer[img] = os.path.splitext(img)[0]
+        self.image_pool = random.sample(all_images, len(all_images))
+        self.total_questions = len(self.image_pool)
+        self.answered_questions = 0
+        self.start_quiz()
+
+    def load_images_from_folder(self, category, add_to_pool=True):
+        folder_path = os.path.join(self.base_folder, category)
+        images = [f for f in os.listdir(folder_path) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+        if add_to_pool:
+            image_to_answer = {img: os.path.splitext(img)[0] for img in images}
+            self.image_to_answer = image_to_answer
+            self.image_pool = random.sample(images, len(images))
+            self.total_questions = len(images)
+            self.answered_questions = 0
+        return images
+
+    def start_quiz(self):
+        logging.info("Starting quiz...")
+
+        self.streak = 0
+        self.clear_window()
+
+        self.create_label(f"Kategori: {self.current_category}", font=("Helvetica", 20, "bold"), bg=self.neutral_color, fg=self.heading_color)
+        back_button = self.create_button("Tilbake", self.show_start_menu, font=self.label_font, bg=self.button_bg_color)
+
+        self.feedback_label = self.create_label("", font=self.label_font, bg=self.neutral_color)
+        self.image_label = tk.Label(self.root, bg=self.neutral_color)
+        self.image_label.pack(pady=20)
+
+        self.entry_text = tk.StringVar()
+        self.entry = tk.Entry(self.root, font=("Helvetica", 18), width=30, textvariable=self.entry_text)
+        self.entry.pack(pady=10)
+        self.entry.focus_set()
+
+        self.submit_button = self.create_button("Submit", self.check_answer, font=("Helvetica", 14, "bold"), bg=self.button_bg_color)
+
+        if self.current_category == "Daglig behov":
+            self.hint_button = self.create_button("Vis hint", self.show_daglig_behov_hint, font=("Helvetica", 14, "bold"), bg="#FFD700")
+
+        self.score_label = self.create_label(f"Score: {self.score}", font=self.label_font, bg=self.neutral_color)
+        self.streak_label = self.create_label(f"Streak: {self.streak}", font=self.label_font, bg=self.neutral_color)
+        self.high_score_label = self.create_label(f"High Score: {self.high_score}", font=self.label_font, bg=self.neutral_color)
+
+        progress_percentage = (self.answered_questions / self.total_questions) * 100 if self.total_questions > 0 else 0
+        self.progress_label = self.create_label(f"Progresjon: {progress_percentage:.1f}% ({self.answered_questions}/{self.total_questions})",
+                                                font=self.label_font, bg=self.neutral_color, fg="#333333")
+
+        self.root.bind('<Return>', self.enter_key_pressed)
+        self.root.bind('<Button-1>', self.handle_click)
+
+        self.hint_frame = None
+        self.load_new_image()
+
+    def load_new_image(self):
+        if not self.image_pool:
+            self.show_quiz_results()
+            return
+
+        current_image_path, self.current_image_category = random.choice(self.image_pool)
+        self.image_pool.remove((current_image_path, self.current_image_category))
+
+        self.correct_answer = os.path.splitext(current_image_path)[0]
+
+        img = Image.open(current_image_path)
+        img = img.resize((400, 400), Image.Resampling.LANCZOS)
+        self.current_image = ImageTk.PhotoImage(img)
+        self.image_label.config(image=self.current_image)
+
+    # Flere funksjoner for quiz, feilhåndtering og lagring...
+
+# Eksempel på enhetstest for load_progress-funksjonen
+class TestSignGame(unittest.TestCase):
+    def setUp(self):
+        # Lag en testspillerfil
+        self.test_player_name = "test

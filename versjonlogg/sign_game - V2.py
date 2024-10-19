@@ -1,0 +1,237 @@
+import tkinter as tk
+from tkinter import messagebox
+import random
+import os
+import sys
+from PIL import Image, ImageTk
+
+# Function to get the resource path
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        base_path = sys._MEIPASS
+    except AttributeError:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
+class SignGame:
+    def __init__(self, root, image_folder):
+        self.root = root
+        self.root.title("ASK123 - Tegn til tale spill")
+        self.score = 0
+        self.streak = 0
+        self.high_score = 0
+        self.timer = None
+        self.time_left = 30  # Seconds to answer
+        self.hint_used = False
+
+        # Load high score from file if it exists
+        self.load_high_score()
+
+        # Load all images from the specified folder
+        self.image_folder = image_folder
+        self.image_files = sorted([f for f in os.listdir(image_folder) if f.endswith(('.png', '.jpg', '.jpeg'))])
+
+        # Shuffle images so that they are not repeated until all are shown
+        self.image_pool = random.sample(self.image_files, len(self.image_files))
+
+        # Create a dictionary mapping images to their corresponding answers (based on filename, no extension)
+        self.image_to_answer = {img: os.path.splitext(img)[0] for img in self.image_files}
+
+        # Create a simple menu for keyboard shortcut info
+        self.create_menu()
+
+        # Create GUI elements
+        self.label = tk.Label(root, text="Hva er tegnet?")
+        self.label.pack(pady=10)
+
+        self.image_label = tk.Label(root)
+        self.image_label.pack()
+
+        self.entry = tk.Entry(root)
+        self.entry.pack(pady=10)
+        self.entry.focus_set()  # Set focus to entry when the game starts
+
+        self.submit_button = tk.Button(root, text="Submit", command=self.check_answer)
+        self.submit_button.pack(side=tk.LEFT, padx=5)
+
+        self.hint_button = tk.Button(root, text="Hint", command=self.give_hint)
+        self.hint_button.pack(side=tk.LEFT, padx=5)
+
+        # Label for score, streak, and high score
+        self.score_label = tk.Label(root, text="Score: 0")
+        self.score_label.pack(pady=10)
+
+        self.streak_label = tk.Label(root, text="Streak: 0")
+        self.streak_label.pack(pady=10)
+
+        self.high_score_label = tk.Label(root, text=f"High Score: {self.high_score}")
+        self.high_score_label.pack(pady=10)
+
+        # Label to show feedback (correct/incorrect answers)
+        self.feedback_label = tk.Label(root, text="", font=("Helvetica", 12))
+        self.feedback_label.pack(pady=10)
+
+        self.timer_label = tk.Label(root, text=f"Time left: {self.time_left}s")
+        self.timer_label.pack(pady=10)
+
+        # Bind the Enter key and other keyboard shortcuts
+        self.root.bind('<Return>', self.enter_key_pressed)
+        self.root.bind('<h>', self.hint_key_pressed)
+        self.root.bind('<n>', self.next_image_key_pressed)
+        self.root.bind('<r>', self.reset_score_key_pressed)
+
+        # Bind clicks outside the entry to clear focus and re-enable shortcuts
+        self.root.bind('<Button-1>', self.handle_click)
+
+        # Start game by loading a random image
+        self.load_new_image()
+
+    def create_menu(self):
+        """Create a simple menu with a keyboard shortcuts overview."""
+        menu_bar = tk.Menu(self.root)
+        help_menu = tk.Menu(menu_bar, tearoff=0)
+        help_menu.add_command(label="Hurtigtaster", command=self.show_shortcuts)
+        menu_bar.add_cascade(label="Hjelp", menu=help_menu)
+        self.root.config(menu=menu_bar)
+
+    def show_shortcuts(self):
+        """Show a message box with keyboard shortcuts."""
+        shortcuts = (
+            "Hurtigtaster:\n"
+            "Enter: Sende inn svar\n"
+            "H: Hint\n"
+            "N: Neste bilde\n"
+            "R: Tilbakestill score"
+        )
+        messagebox.showinfo("Hurtigtaster", shortcuts)
+
+    def enter_key_pressed(self, event):
+        """Handle pressing of Enter key to check the answer."""
+        if self.root.focus_get() == self.entry:
+            self.check_answer()
+
+    def hint_key_pressed(self, event):
+        """Handle pressing of H key to give a hint."""
+        if self.root.focus_get() != self.entry:
+            self.give_hint()
+
+    def next_image_key_pressed(self, event):
+        """Handle pressing of N key to skip to the next image."""
+        if self.root.focus_get() != self.entry:
+            self.load_new_image()
+
+    def reset_score_key_pressed(self, event):
+        """Handle pressing of R key to reset the score and streak."""
+        if self.root.focus_get() != self.entry:
+            self.score = 0
+            self.streak = 0
+            self.update_labels()
+
+    def handle_click(self, event):
+        """Handle clicks outside the entry box to clear focus and allow shortcuts."""
+        if event.widget != self.entry:
+            self.root.focus()
+
+    def load_new_image(self):
+        """Load a random image from the shuffled pool and display it."""
+        if not self.image_pool:
+            self.image_pool = random.sample(self.image_files, len(self.image_files))
+
+        self.current_image = self.image_pool.pop()
+        self.correct_answer = self.image_to_answer.get(self.current_image, "Ingen svar funnet")
+        self.hint_used = False
+
+        img_path = resource_path(os.path.join(self.image_folder, self.current_image))
+        try:
+            img = Image.open(img_path)
+            img = img.resize((300, 300), Image.LANCZOS)
+            img = ImageTk.PhotoImage(img)
+            self.image_label.configure(image=img)
+            self.image_label.image = img  # Keep a reference to avoid garbage collection
+        except Exception as e:
+            print(f"Error loading image: {e}")
+            messagebox.showerror("Error", f"Kunne ikke laste inn bildet: {e}")
+
+        self.reset_timer()
+
+    def reset_timer(self):
+        """Reset the countdown timer for each new image."""
+        if self.timer:
+            self.root.after_cancel(self.timer)
+        self.time_left = 30
+        self.update_timer()
+
+    def update_timer(self):
+        """Update the timer label every second and check if time runs out."""
+        self.timer_label.config(text=f"Time left: {self.time_left}s")
+        if self.time_left > 0:
+            self.time_left -= 1
+            self.timer = self.root.after(1000, self.update_timer)
+        else:
+            self.streak = 0
+            self.show_feedback(False, f"Tiden er ute! Svaret var '{self.correct_answer}'.")
+            self.update_labels()
+            self.load_new_image()
+
+    def check_answer(self):
+        """Check if the entered answer matches the filename without extension (case insensitive)."""
+        user_input = self.entry.get().strip().lower()  # Convert user input to lowercase
+        if user_input == self.correct_answer.lower():  # Convert correct answer to lowercase
+            self.score += 1
+            self.streak += 1
+            self.show_feedback(True, "Riktig svar!")
+            if self.score > self.high_score:
+                self.high_score = self.score
+                self.save_high_score()
+        else:
+            self.streak = 0
+            self.show_feedback(False, f"Feil svar! Riktig svar var '{self.correct_answer}'.")
+
+        # Update labels and clear the entry for next input
+        self.update_labels()
+        self.entry.delete(0, tk.END)
+        self.entry.focus_set()  # Automatically set focus to entry
+
+        # Load the next image
+        self.load_new_image()
+
+    def show_feedback(self, correct, message):
+        """Display feedback message in green for correct answers and red for incorrect ones."""
+        if correct:
+            self.feedback_label.config(text=message, fg="green")
+        else:
+            self.feedback_label.config(text=message, fg="red")
+
+    def update_labels(self):
+        """Update the score, streak, and high score labels."""
+        self.score_label.config(text=f"Score: {self.score}")
+        self.streak_label.config(text=f"Streak: {self.streak}")
+        self.high_score_label.config(text=f"High Score: {self.high_score}")
+
+    def give_hint(self):
+        """Provide the first letter of the answer as a hint."""
+        if not self.hint_used:
+            hint = self.correct_answer[:2]  # Show first 2 letters as hint
+            messagebox.showinfo("Hint", f"Hint: {hint}...")
+            self.hint_used = True
+
+    def load_high_score(self):
+        """Load the high score from a file if it exists."""
+        try:
+            with open("high_score.txt", "r") as f:
+                self.high_score = int(f.read().strip())
+        except FileNotFoundError:
+            self.high_score = 0
+
+    def save_high_score(self):
+        """Save the current high score to a file."""
+        with open("high_score.txt", "w") as f:
+            f.write(str(self.high_score))
+
+# Set up the main window and game
+root = tk.Tk()
+image_folder = resource_path("images")  # Use resource_path for images
+
+game = SignGame(root, image_folder)
+root.mainloop()
